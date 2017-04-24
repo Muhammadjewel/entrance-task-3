@@ -4,11 +4,12 @@
  * Сервис-воркер, обеспечивающий оффлайновую работу избранного
  */
 
-const CACHE_VERSION = '1.0.0-broken';
+const CACHE_VERSION = '1.0.0';
 
 importScripts('../vendor/kv-keeper.js-1.0.4/kv-keeper.js');
 
-
+// при установки СВ ждем кеширования нужных элементов
+// потом активируем СВ не ждам деативации прежних версий
 self.addEventListener('install', event => {
     const promise = preCacheAllFavorites()
         // Вопрос №1: зачем нужен этот вызов?
@@ -18,6 +19,7 @@ self.addEventListener('install', event => {
     event.waitUntil(promise);
 });
 
+// в цикле активации удаляем ненужный кеш и добавляем неконтролированных клиентов в scope СВ
 self.addEventListener('activate', event => {
     const promise = deleteObsoleteCaches()
         .then(() => {
@@ -30,17 +32,24 @@ self.addEventListener('activate', event => {
     event.waitUntil(promise);
 });
 
+
 self.addEventListener('fetch', event => {
+    // берем URL запросв
     const url = new URL(event.request.url);
 
     // Вопрос №3: для всех ли случаев подойдёт такое построение ключа?
     const cacheKey = url.origin + url.pathname;
 
     let response;
+    // если нужно кешировать данные этого запроса с данного URL
     if (needStoreForOffline(cacheKey)) {
+        // если есть подходяший кеш в браузере, отвечаем кешом на запрос
         response = caches.match(cacheKey)
+            // если нету кеша для данного URL
+            // показываем эту страницу пользователью и слхраняем в кеш
             .then(cacheResponse => cacheResponse || fetchAndPutToCache(cacheKey, event.request));
     } else {
+        // в другом случае отправляем данные с кеша
         response = fetchWithFallbackToCache(event.request);
     }
 
@@ -74,17 +83,24 @@ function preCacheAllFavorites() {
 function getAllFavorites() {
     return new Promise((resolve, reject) => {
         KvKeeper.getKeys((err, keys) => {
+            // в случае ошибки при взятии ключей, переходить на reject промиса
             if (err) {
                 return reject(err);
             }
 
+            // получаем id избранных гифок
             const ids = keys
+                // выбираем все id у которых есть префикс favorites:
                 .filter(key => key.startsWith('favorites:'))
                 // 'favorites:'.length == 10
+                // убираем слово "favorites:" и получаем id всех избранных гифок
                 .map(key => key.slice(10));
 
+            // Promise будет ждать окончания всех внутренних промисов
             Promise.all(ids.map(getFavoriteById))
                 .then(urlGroups => {
+                    // id всех избранных гифок добавляется в один массив
+                    // и этот массив дается при вызове функции getAllFavorites
                     return urlGroups.reduce((res, urls) => res.concat(urls), []);
                 })
                 .then(resolve, reject);
@@ -125,9 +141,9 @@ function deleteObsoleteCaches() {
 
 // Нужно ли при скачивании сохранять ресурс для оффлайна?
 function needStoreForOffline(cacheKey) {
-    return cacheKey.includes('vendor/') ||
-        cacheKey.includes('assets/') ||
-        cacheKey.endsWith('jquery.min.js');
+    return cacheKey.includes('/vendor/') ||
+        cacheKey.includes('/assets/') ||
+        cacheKey.endsWith('/jquery.min.js');
 }
 
 // Скачать и добавить в кеш
